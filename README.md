@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
@@ -244,258 +245,266 @@
         import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc, getDocs, writeBatch, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // Configuração Inicial
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-        let fbUser = null;
-        let isAppStarted = false;
-        let recordsData = [];
-
-        // --- CONTROLE DE INTERFACE ---
-        function setView(view) {
-            document.getElementById('initLoader').style.display = 'none';
-            document.getElementById('loginScreen').style.display = view === 'login' ? 'flex' : 'none';
-            document.getElementById('mainContent').style.display = view === 'app' ? 'block' : 'none';
-        }
-
-        // --- SISTEMA DE AUTENTICAÇÃO ---
-        const handleAuth = async () => {
+        // Prevenção de erro de inicialização se as globais não estiverem prontas
+        const getFirebaseConfig = () => {
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                return typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
             } catch (e) {
-                console.error("Auth Error:", e);
-                alert("Falha ao conectar. Tente recarregar a página.");
+                return null;
             }
         };
 
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                fbUser = user;
-                const isLogged = localStorage.getItem('clothes_system_auth') === 'true';
-                if (isLogged) {
-                    setView('app');
-                    startApp();
-                } else {
-                    setView('login');
-                }
+        const config = getFirebaseConfig();
+        if (!config) {
+            console.error("Firebase config is missing.");
+            document.body.innerHTML = "<div class='p-10 text-center text-red-600 font-bold'>Erro Crítico: Configuração do Banco de Dados não encontrada. Contate o administrador.</div>";
+        } else {
+            const app = initializeApp(config);
+            const db = getFirestore(app);
+            const auth = getAuth(app);
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            let fbUser = null;
+            let isAppStarted = false;
+            let recordsData = [];
+
+            // --- CONTROLE DE INTERFACE ---
+            function setView(view) {
+                document.getElementById('initLoader').style.display = 'none';
+                document.getElementById('loginScreen').style.display = view === 'login' ? 'flex' : 'none';
+                document.getElementById('mainContent').style.display = view === 'app' ? 'block' : 'none';
             }
-        });
 
-        // --- LOGIN ---
-        document.getElementById('loginForm').onsubmit = async (e) => {
-            e.preventDefault();
-            if (!fbUser) return;
-
-            const u = document.getElementById('username').value;
-            const p = document.getElementById('password').value;
-            const btn = document.getElementById('btnLogin');
-            const err = document.getElementById('loginError');
-
-            btn.disabled = true;
-            err.classList.add('hidden');
-
-            try {
-                // Verificação mestre + banco de dados
-                const authRef = collection(db, 'artifacts', appId, 'public', 'data', 'auth');
-                const snap = await getDocs(authRef);
-                let access = (u === "CLX" && p === "02072007");
-
-                if (!access) {
-                    snap.forEach(d => {
-                        if (d.data().username === u && d.data().password === p) access = true;
-                    });
+            // --- SISTEMA DE AUTENTICAÇÃO ---
+            const handleAuth = async () => {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (e) {
+                    console.error("Auth Error:", e);
+                    // Fallback para usuários em ambiente sem token customizado (retry manual)
+                    setTimeout(handleAuth, 2000);
                 }
+            };
 
-                if (access) {
-                    localStorage.setItem('clothes_system_auth', 'true');
-                    setView('app');
-                    startApp();
-                } else {
-                    err.classList.remove('hidden');
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    fbUser = user;
+                    const isLogged = localStorage.getItem('clothes_system_auth') === 'true';
+                    if (isLogged) {
+                        setView('app');
+                        startApp();
+                    } else {
+                        setView('login');
+                    }
                 }
-            } catch (err) {
-                console.error(err);
-                alert("Erro de permissão. O Firebase ainda está sincronizando.");
-            } finally {
-                btn.disabled = false;
-            }
-        };
-
-        document.getElementById('btnLogoutAction').onclick = () => {
-            localStorage.removeItem('clothes_system_auth');
-            setView('login');
-        };
-
-        // --- NÚCLEO DA APLICAÇÃO ---
-        function startApp() {
-            if (isAppStarted) return;
-            isAppStarted = true;
-            
-            loadSettings();
-
-            // Sincronização em tempo real de Registros
-            const regRef = collection(db, 'artifacts', appId, 'public', 'data', 'registros');
-            onSnapshot(regRef, (snap) => {
-                const list = [];
-                snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-                // Ordenação por timestamp de criação
-                list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                recordsData = list;
-                renderMainTable(list);
             });
 
-            // Sincronização em tempo real de Usuários
-            const userRef = collection(db, 'artifacts', appId, 'public', 'data', 'auth');
-            onSnapshot(userRef, (snap) => {
-                const body = document.getElementById('userTableBody');
-                body.innerHTML = `
-                    <tr class="bg-blue-50/30">
-                        <td class="p-3 font-bold text-blue-700">CLX (Administrador)</td>
-                        <td class="p-3 text-slate-400 font-mono italic">Protegido</td>
-                        <td class="p-3 text-center text-slate-300">-</td>
-                    </tr>
-                `;
-                snap.forEach(d => {
+            // --- LOGIN ---
+            document.getElementById('loginForm').onsubmit = async (e) => {
+                e.preventDefault();
+                if (!fbUser) return;
+
+                const u = document.getElementById('username').value;
+                const p = document.getElementById('password').value;
+                const btn = document.getElementById('btnLogin');
+                const err = document.getElementById('loginError');
+
+                btn.disabled = true;
+                err.classList.add('hidden');
+
+                try {
+                    const authRef = collection(db, 'artifacts', appId, 'public', 'data', 'auth');
+                    const snap = await getDocs(authRef);
+                    let access = (u === "CLX" && p === "02072007");
+
+                    if (!access) {
+                        snap.forEach(d => {
+                            if (d.data().username === u && d.data().password === p) access = true;
+                        });
+                    }
+
+                    if (access) {
+                        localStorage.setItem('clothes_system_auth', 'true');
+                        setView('app');
+                        startApp();
+                    } else {
+                        err.classList.remove('hidden');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Erro ao verificar credenciais. Verifique sua conexão.");
+                } finally {
+                    btn.disabled = false;
+                }
+            };
+
+            document.getElementById('btnLogoutAction').onclick = () => {
+                localStorage.removeItem('clothes_system_auth');
+                setView('login');
+            };
+
+            // --- NÚCLEO DA APLICAÇÃO ---
+            function startApp() {
+                if (isAppStarted) return;
+                isAppStarted = true;
+                
+                loadSettings();
+
+                // Registros
+                const regRef = collection(db, 'artifacts', appId, 'public', 'data', 'registros');
+                onSnapshot(regRef, (snap) => {
+                    const list = [];
+                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    recordsData = list;
+                    renderMainTable(list);
+                }, (err) => console.error("Snapshot error:", err));
+
+                // Usuários
+                const userRef = collection(db, 'artifacts', appId, 'public', 'data', 'auth');
+                onSnapshot(userRef, (snap) => {
+                    const body = document.getElementById('userTableBody');
+                    body.innerHTML = `
+                        <tr class="bg-blue-50/30">
+                            <td class="p-3 font-bold text-blue-700">CLX (Administrador)</td>
+                            <td class="p-3 text-slate-400 font-mono italic">Protegido</td>
+                            <td class="p-3 text-center text-slate-300">-</td>
+                        </tr>
+                    `;
+                    snap.forEach(d => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td class="p-3 font-medium text-slate-700">${d.data().username}</td>
+                            <td class="p-3 text-slate-500 font-mono">${d.data().password}</td>
+                            <td class="p-3 text-center">
+                                <button class="text-red-500 hover:text-red-700 transition-colors del-u-btn" data-id="${d.id}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                </button>
+                            </td>
+                        `;
+                        body.appendChild(tr);
+                    });
+                    
+                    document.querySelectorAll('.del-u-btn').forEach(b => {
+                        b.onclick = async () => {
+                            if (confirm("Revogar acesso deste usuário?")) {
+                                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'auth', b.dataset.id));
+                            }
+                        };
+                    });
+                });
+            }
+
+            async function loadSettings() {
+                try {
+                    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'));
+                    if (snap.exists()) {
+                        document.getElementById('unitPriceInput').value = snap.data().price.toFixed(2);
+                    }
+                } catch (e) { console.error("Config Load Error", e); }
+            }
+
+            document.getElementById('unitPriceInput').onchange = async (e) => {
+                const val = parseFloat(e.target.value) || 0;
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'), { price: val });
+            };
+
+            function renderMainTable(data) {
+                const body = document.getElementById('tableBody');
+                const totalDisplay = document.getElementById('grandTotal');
+                body.innerHTML = '';
+                let grandTotal = 0;
+
+                data.forEach(item => {
+                    const price = item.priceAtTime || 70;
+                    const subtotal = item.qty * price;
+                    grandTotal += subtotal;
+
                     const tr = document.createElement('tr');
+                    tr.className = "hover:bg-slate-50/50 transition-colors group";
                     tr.innerHTML = `
-                        <td class="p-3 font-medium text-slate-700">${d.data().username}</td>
-                        <td class="p-3 text-slate-500 font-mono">${d.data().password}</td>
-                        <td class="p-3 text-center">
-                            <button class="text-red-500 hover:text-red-700 transition-colors del-u-btn" data-id="${d.id}">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        <td class="px-6 py-4 font-semibold text-slate-700">${item.name}</td>
+                        <td class="px-6 py-4 text-slate-500">${item.date.split('-').reverse().join('/')}</td>
+                        <td class="px-6 py-4 text-center font-bold text-slate-600">${item.qty}</td>
+                        <td class="px-6 py-4 text-right font-bold text-slate-800">R$ ${subtotal.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                        <td class="px-6 py-4 text-center">
+                            <button class="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 del-rec-btn p-1" data-id="${item.id}">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                         </td>
                     `;
                     body.appendChild(tr);
                 });
-                
-                document.querySelectorAll('.del-u-btn').forEach(b => {
-                    b.onclick = async () => {
-                        if (confirm("Revogar acesso deste usuário?")) {
-                            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'auth', b.dataset.id));
+
+                totalDisplay.innerText = `R$ ${grandTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+
+                document.querySelectorAll('.del-rec-btn').forEach(btn => {
+                    btn.onclick = async () => {
+                        if (confirm("Deseja realmente excluir este registro?")) {
+                            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'registros', btn.dataset.id));
                         }
                     };
                 });
-            });
-        }
+            }
 
-        async function loadSettings() {
-            try {
-                const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'));
-                if (snap.exists()) {
-                    document.getElementById('unitPriceInput').value = snap.data().price.toFixed(2);
-                }
-            } catch (e) { console.error("Config Load Error", e); }
-        }
-
-        document.getElementById('unitPriceInput').onchange = async (e) => {
-            const val = parseFloat(e.target.value) || 0;
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main'), { price: val });
-        };
-
-        function renderMainTable(data) {
-            const body = document.getElementById('tableBody');
-            const totalDisplay = document.getElementById('grandTotal');
-            body.innerHTML = '';
-            let grandTotal = 0;
-
-            data.forEach(item => {
-                const price = item.priceAtTime || 70;
-                const subtotal = item.qty * price;
-                grandTotal += subtotal;
-
-                const tr = document.createElement('tr');
-                tr.className = "hover:bg-slate-50/50 transition-colors group";
-                tr.innerHTML = `
-                    <td class="px-6 py-4 font-semibold text-slate-700">${item.name}</td>
-                    <td class="px-6 py-4 text-slate-500">${item.date.split('-').reverse().join('/')}</td>
-                    <td class="px-6 py-4 text-center font-bold text-slate-600">${item.qty}</td>
-                    <td class="px-6 py-4 text-right font-bold text-slate-800">R$ ${subtotal.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
-                    <td class="px-6 py-4 text-center">
-                        <button class="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 del-rec-btn p-1" data-id="${item.id}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                    </td>
-                `;
-                body.appendChild(tr);
-            });
-
-            totalDisplay.innerText = `R$ ${grandTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
-
-            document.querySelectorAll('.del-rec-btn').forEach(btn => {
-                btn.onclick = async () => {
-                    if (confirm("Deseja realmente excluir este registro?")) {
-                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'registros', btn.dataset.id));
-                    }
-                };
-            });
-        }
-
-        document.getElementById('entryForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const btn = e.target.querySelector('button');
-            btn.disabled = true;
-            
-            try {
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'registros'), {
-                    name: document.getElementById('patientName').value,
-                    date: document.getElementById('entryDate').value,
-                    qty: parseInt(document.getElementById('clothingQty').value),
-                    priceAtTime: parseFloat(document.getElementById('unitPriceInput').value),
-                    createdAt: Date.now()
-                });
+            document.getElementById('entryForm').onsubmit = async (e) => {
+                e.preventDefault();
+                const btn = e.target.querySelector('button');
+                btn.disabled = true;
                 
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'registros'), {
+                        name: document.getElementById('patientName').value,
+                        date: document.getElementById('entryDate').value,
+                        qty: parseInt(document.getElementById('clothingQty').value),
+                        priceAtTime: parseFloat(document.getElementById('unitPriceInput').value),
+                        createdAt: Date.now()
+                    });
+                    
+                    e.target.reset();
+                    document.getElementById('entryDate').valueAsDate = new Date();
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    btn.disabled = false;
+                }
+            };
+
+            document.getElementById('newUserForm').onsubmit = async (e) => {
+                e.preventDefault();
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'auth'), {
+                    username: document.getElementById('newUsername').value,
+                    password: document.getElementById('newPassword').value
+                });
                 e.target.reset();
-                document.getElementById('entryDate').valueAsDate = new Date();
-            } catch (err) {
-                console.error(err);
-            } finally {
-                btn.disabled = false;
-            }
-        };
+            };
 
-        document.getElementById('newUserForm').onsubmit = async (e) => {
-            e.preventDefault();
-            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'auth'), {
-                username: document.getElementById('newUsername').value,
-                password: document.getElementById('newPassword').value
-            });
-            e.target.reset();
-        };
+            document.getElementById('exportExcel').onclick = () => {
+                if (recordsData.length === 0) return alert("Não existem dados para exportar.");
+                const table = document.getElementById("mainDataTable");
+                const wb = XLSX.utils.table_to_book(table, { sheet: "Controle de Roupas" });
+                XLSX.writeFile(wb, `Controle_Roupas_CC_${new Date().toLocaleDateString().replace(/\//g, '-')}.xlsx`);
+            };
 
-        document.getElementById('exportExcel').onclick = () => {
-            if (recordsData.length === 0) return alert("Não existem dados para exportar.");
-            
-            const table = document.getElementById("mainDataTable");
-            const wb = XLSX.utils.table_to_book(table, { sheet: "Controle de Roupas" });
-            XLSX.writeFile(wb, `Controle_Roupas_CC_${new Date().toLocaleDateString().replace(/\//g, '-')}.xlsx`);
-        };
+            document.getElementById('btnClearAll').onclick = async () => {
+                if (confirm("CUIDADO: Esta ação apagará TODOS os registros permanentemente. Deseja continuar?")) {
+                    const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'registros'));
+                    const batch = writeBatch(db);
+                    snap.forEach(d => batch.delete(d.ref));
+                    await batch.commit();
+                }
+            };
 
-        document.getElementById('btnClearAll').onclick = async () => {
-            if (confirm("CUIDADO: Esta ação apagará TODOS os registros permanentemente. Deseja continuar?")) {
-                const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'registros'));
-                const batch = writeBatch(db);
-                snap.forEach(d => batch.delete(d.ref));
-                await batch.commit();
-                alert("Banco de dados limpo com sucesso.");
-            }
-        };
+            document.getElementById('openSettings').onclick = () => document.getElementById('settingsModal').style.display = 'flex';
+            document.getElementById('closeSettings').onclick = () => document.getElementById('settingsModal').style.display = 'none';
+            document.getElementById('entryDate').valueAsDate = new Date();
 
-        // UI Helpers
-        document.getElementById('openSettings').onclick = () => document.getElementById('settingsModal').style.display = 'flex';
-        document.getElementById('closeSettings').onclick = () => document.getElementById('settingsModal').style.display = 'none';
-        document.getElementById('entryDate').valueAsDate = new Date();
-
-        // Start
-        handleAuth();
+            handleAuth();
+        }
     </script>
 </body>
 </html>
